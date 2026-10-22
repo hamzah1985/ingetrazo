@@ -398,6 +398,7 @@ class PushPullTool(Tool):
         # corner or a face hit), drawn as a green marker by the viewport overlay.
         self._inference_point: QVector3D | None = None
         self._inference_kind: str | None = None
+        self._reference_gate: tuple | None = None
         # Set when the last _mutate refused the push to keep the solid valid
         # (the BIM-grade guard); _commit surfaces it in the status bar.
         self._refused: bool = False
@@ -530,6 +531,10 @@ class PushPullTool(Tool):
         # stage exists to avoid); the inference skips its geometry instead.
         self._revert_prism_preview(viewport)
         inferred = self._infer_reference_distance(ctx)
+        if not self._reference_near_drag(ctx, inferred):
+            inferred = None
+            self._inference_point = None
+            self._inference_kind = None
         if inferred is not None:
             self.extrusion = inferred
         else:
@@ -1536,6 +1541,46 @@ class PushPullTool(Tool):
             return True
         occluded = getattr(vp, "_is_occluded", None)   # stub viewports in tests
         return occluded is not None and occluded(world)
+
+    def _reference_near_drag(self, ctx: ToolContext, distance: float | None) -> bool:
+        """Keep broad surface references close to the cursor's free push distance.
+
+        A face or edge under the pointer need not be near the cap being moved:
+        a box's side can otherwise snap an inward push back to its starting
+        height. Corners, the origin and guides already have an explicit pixel
+        proximity test, so retain those deliberate reference gestures.
+        """
+        kind = self._inference_kind
+        if distance is None or kind not in ("face", "edge"):
+            self._reference_gate = None
+            return True
+        vp = ctx.viewport
+        to_pixel = getattr(vp, "_world_to_pixel", None)
+        project = getattr(vp, "_project_to_lock_line", None)
+        if to_pixel is None or project is None:
+            self._reference_gate = None
+            return True
+        grab = self._grab if self._grab is not None else self._anchor
+        free = project(grab, self._normal, ctx.screen.x(), ctx.screen.y())
+        free_px = to_pixel(free)
+        reference_px = to_pixel(grab + self._normal * distance)
+        if free_px is None or reference_px is None:
+            self._reference_gate = None
+            return False
+        threshold = float(getattr(vp, "snap_threshold_px", 9.0))
+        held = getattr(self, "_reference_gate", None)
+        # A fixed reference level gets a wider release radius. Continuous
+        # edge/face hits still follow the cursor; never latch their old height.
+        if (held is not None and held[0] is self._anchor
+                and held[1] == kind and abs(held[2] - distance) < 1e-7):
+            threshold *= 1.5
+        gap = math.hypot(reference_px[0] - free_px[0],
+                         reference_px[1] - free_px[1])
+        if gap <= threshold:
+            self._reference_gate = (self._anchor, kind, distance)
+            return True
+        self._reference_gate = None
+        return False
 
     def _infer_reference_distance(self, ctx: ToolContext):
         """Distance making the moved face level with the model geometry under the
@@ -2592,6 +2637,7 @@ class PushPullTool(Tool):
         self._drag_pre_oriented = False
         self._inference_point = None
         self._inference_kind = None
+        self._reference_gate = None
         self._infer_cache = None       # per-drag projected-vertex candidates
         self._refused = False
         self._tiny_hint_shown = False
