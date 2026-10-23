@@ -42,6 +42,7 @@ import math
 import os
 import inspect
 import re
+import sys
 import time as _time_mod
 from array import array
 from pathlib import Path
@@ -14272,8 +14273,16 @@ class Viewport(QOpenGLWidget):
         claims = getattr(self.active_tool, "claims_key", None)
         return callable(claims) and bool(claims(ev.key(), ev.modifiers()))
 
+    def _tool_key(self, key: int) -> int:
+        """Option copies on macOS; other tools keep their own Alt behavior."""
+        if (sys.platform == "darwin" and key == Qt.Key_Alt
+                and getattr(self.active_tool, "option_copies", False)):
+            return Qt.Key_Control
+        return key
+
     def keyPressEvent(self, ev) -> None:
-        if ev.key() == Qt.Key_Control and not ev.isAutoRepeat():
+        key = self._tool_key(ev.key())
+        if key == Qt.Key_Control and not ev.isAutoRepeat():
             self._ctrl_alone = True       # until another key says otherwise
         # Held keys (First Person): the press and the release are the
         # tool's; auto-repeat says nothing new.
@@ -14307,7 +14316,7 @@ class Viewport(QOpenGLWidget):
 
         # 2. Active tool gets first shot at the key.
         if self.active_tool is not None:
-            if self.active_tool.on_key(self, ev.key(), ev.modifiers()):
+            if self.active_tool.on_key(self, key, ev.modifiers()):
                 return
 
         # 2b. Delete in any other tool (Paint, Push/Pull, Offset…): with the
@@ -14647,7 +14656,7 @@ class Viewport(QOpenGLWidget):
         if callable(release):
             if ev.isAutoRepeat() and self._tool_claims_key(ev):
                 return
-            if not ev.isAutoRepeat() and release(self, ev.key()):
+            if not ev.isAutoRepeat() and release(self, self._tool_key(ev.key())):
                 return
         if ev.key() == Qt.Key_Alt and not ev.isAutoRepeat():
             self._apply_alt_cursor(False)
