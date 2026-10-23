@@ -13,6 +13,7 @@ Navigation:
 - Middle-button drag: orbit
 - Shift + Middle-button drag: pan
 - Wheel: zoom
+- Trackpad pinch: smooth zoom
 - P: toggle perspective / parallel projection
 
 Axis lock (active while drawing):
@@ -14093,6 +14094,17 @@ class Viewport(QOpenGLWidget):
         if cap_in_use():
             ev.accept()
             return
+        steps = ev.angleDelta().y() / 120.0
+        if self._invert_wheel:
+            steps = -steps
+        # Drivers that expose pinch as Ctrl+wheel (including Windows)
+        # send small deltas, so skip the wheel's per-notch retreat floor.
+        continuous = bool(ev.modifiers() & Qt.ControlModifier)
+        self._zoom_at_cursor(steps, ev.position(), continuous=continuous)
+
+    def _zoom_at_cursor(self, steps: float, pos: QPointF,
+                        continuous: bool = False) -> None:
+        """Share cursor anchoring between wheel zoom and native trackpad pinch."""
         self._input_t = _time_mod.monotonic()   # P0: input→paint latency
         # Zoom toward the cursor: keep the point under the
         # pointer fixed on screen, not the origin. During a wheel burst the
@@ -14100,10 +14112,6 @@ class Viewport(QOpenGLWidget):
         # tick both wasted ~25 ms/tick against a big model (the zoom felt
         # heavy) and let float error drift the pinned point.
         import time as _time
-        steps = ev.angleDelta().y() / 120.0
-        if self._invert_wheel:          # Preferences ▸ General (the usual
-            steps = -steps              # Compatibility ▸ invert wheel)
-        pos = ev.position()
         now = _time.monotonic()
 
         def pose():
@@ -14147,14 +14155,18 @@ class Viewport(QOpenGLWidget):
             # A perceptible retreat even from a close-up: ~1 % of the
             # model's size per notch when the frame scaling alone would move
             # the eye less than that (the "zoom is stuck" report).
+            # The wheel's minimum retreat is per notch. Applying it to
+            # every tiny pinch delta makes a slow pinch jump and drift.
+            min_step = 0.0 if continuous else self._zoom_out_step()
             self.camera.zoom_to(steps, focus,
-                                min_step=self._zoom_out_step())
+                                min_step=min_step)
         else:
             self.camera.zoom(steps)
         self._zoom_focus = (pose(), pos.x(), pos.y(),
                             self.scene.version, focus)
         if _PERF:
-            _plog("wheel", (_time_mod.monotonic() - now) * 1000.0,
+            _plog("pinch" if continuous else "wheel",
+                  (_time_mod.monotonic() - now) * 1000.0,
                   extra=f"reused={'proj' if reproj else reused}", floor=10.0)
         self.update()
 
@@ -14204,6 +14216,22 @@ class Viewport(QOpenGLWidget):
         return getattr(self, "_ctrl_alone", False)
 
     def event(self, ev) -> bool:
+        if ev.type() == QEvent.NativeGesture:
+            gesture = ev.gestureType()
+            if gesture in (Qt.BeginNativeGesture, Qt.EndNativeGesture):
+                self._zoom_focus = None
+                ev.accept()
+                return True
+            if gesture == Qt.ZoomNativeGesture:
+                # macOS and Wayland send incremental magnification, not wheel
+                # notches: spreading the fingers scales by 1 + value.
+                # Camera zoom scales distance by 0.9 ** steps instead.
+                delta = ev.value()
+                if math.isfinite(delta) and delta > -1.0 and delta != 0.0:
+                    steps = math.log1p(delta) / -math.log(0.9)
+                    self._zoom_at_cursor(steps, ev.position(), continuous=True)
+                ev.accept()
+                return True
         if (ev.type() in (QEvent.ShortcutOverride, QEvent.KeyPress)
                 and ev.key() not in self._MODIFIER_KEYS):
             self._ctrl_alone = False
