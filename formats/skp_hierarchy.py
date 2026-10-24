@@ -249,4 +249,3 @@ def build_groups(payload, native_build, tick):
     finally:
         if enabled:
             gc.enable()
-
