@@ -4289,6 +4289,24 @@ class Tray(QDockWidget):
             (tr("Parts"), self.parts),
         ]))
 
+    def show_materials(self) -> None:
+        """Expand Materials and bring its header to the top of the tray."""
+        from PySide6.QtCore import QTimer
+        section = self.materials.parentWidget()
+        section._btn.setChecked(True)
+        # Raising the dock relayouts the scroll area first. Then flush the
+        # section resizing, whose scroll anchor queues its own corrections.
+        QTimer.singleShot(0, self, self._layout_materials)
+
+    def _layout_materials(self) -> None:
+        from PySide6.QtCore import QTimer
+        self.widget().widget().layout().activate()
+        QTimer.singleShot(0, self, self._scroll_to_materials)
+
+    def _scroll_to_materials(self) -> None:
+        scroll = self.widget()
+        scroll.verticalScrollBar().setValue(self.materials.parentWidget().y())
+
     def on_scene_changed(self) -> None:
         self.entity_info.refresh()
         # The materials panel scans every render face for its swatches —

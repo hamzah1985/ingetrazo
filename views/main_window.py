@@ -876,7 +876,9 @@ class MainWindow(QMainWindow):
             action.setStatusTip(tr(tool.description))
         from views.shortcuts import set_tooltip
         set_tooltip(action, name)
-        action.triggered.connect(lambda _c, k=key: self._activate_tool(k))
+        action.triggered.connect(
+            lambda _c, k=key: self._activate_paint() if k == "paint"
+            else self._activate_tool(k))
         self._tool_group.addAction(action)
         tb.addAction(action)
         self._tool_actions[key] = action
@@ -3258,6 +3260,15 @@ class MainWindow(QMainWindow):
             self._vcb_value.setStyleSheet(self._VCB_IDLE_STYLE)
 
     # ---- Tool routing -------------------------------------------------------
+    def _activate_paint(self) -> None:
+        """Choosing Paint reveals the palette; picking a swatch keeps its place."""
+        self._activate_tool("paint")
+        if self._tool_filter is not None and "paint" not in self._tool_filter:
+            return
+        self.set_tray_shown(self.tray, True)
+        self.tray.show_materials()
+        self._remember_command(self._tools["paint"].name, self._activate_paint)
+
     def _activate_tool(self, key: str) -> None:
         if self._tool_filter is not None and key not in self._tool_filter:
             self.statusBar().showMessage(
